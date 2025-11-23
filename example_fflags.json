@@ -1,0 +1,8 @@
+{
+  "FFlagDebugEnableStatsWidget": "true",
+  "FFlagDebugGraphicsPreferD3D11": "true",
+  "DFIntTaskSchedulerTargetFps": "240",
+  "FFlagDebugDisplayUnthemedInstances": "false",
+  "DFIntS2PhysicsSenderRate": "240"
+}
+
