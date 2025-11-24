@@ -2,7 +2,7 @@
 FFlags Automated App
 Main application entry point
 """
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import sys
 import json
@@ -17,7 +17,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTextEdit, QProgressBar,
-    QFileDialog, QMessageBox, QGroupBox
+    QFileDialog, QMessageBox, QGroupBox, QComboBox
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont
@@ -43,7 +43,7 @@ class AutomationWorker(QThread):
     status_update = Signal(str)
     finished = Signal(bool, str)
     
-    def __init__(self, fflags: Dict[str, any], delay: float = 0.05):
+    def __init__(self, fflags: Dict[str, any], delay: float = 0.01):
         super().__init__()
         self.fflags = fflags
         self.delay = delay
@@ -64,29 +64,31 @@ class AutomationWorker(QThread):
                     self.finished.emit(False, "Automation stopped by user")
                     return
                 
-                # Type the key (fast)
-                self.status_update.emit(f"[{idx}/{total}] Typing key: {key}")
+                # Update progress every 10 items to reduce UI overhead
+                if idx % 10 == 0 or idx == total:
+                    progress = int((idx / total) * 100)
+                    self.progress_update.emit(progress)
+                    self.status_update.emit(f"Processing: {idx}/{total} FFlags")
+                
+                # Type the key with verification delay
                 pyautogui.write(str(key), interval=0.0)
-                time.sleep(0.03)
+                time.sleep(self.delay)  # Small delay for system to register
                 
-                # Press Enter
+                # Press Enter and wait for input to be processed
                 pyautogui.press('enter')
-                time.sleep(0.03)
+                time.sleep(self.delay * 2)  # Slightly longer for enter to register
                 
-                # Type the value (fast)
-                self.status_update.emit(f"[{idx}/{total}] Typing value: {value}")
+                # Type the value with verification delay
                 pyautogui.write(str(value), interval=0.0)
-                time.sleep(0.03)
+                time.sleep(self.delay)
                 
-                # Press Enter
+                # Press Enter and wait for input to be processed
                 pyautogui.press('enter')
-                time.sleep(0.03)
+                time.sleep(self.delay * 2)
                 
-                # Update progress
-                progress = int((idx / total) * 100)
-                self.progress_update.emit(progress)
-                
-                logger.info(f"Processed FFlag: {key} = {value}")
+                # Log every 100 entries to reduce overhead
+                if idx % 100 == 0 or idx == total:
+                    logger.info(f"Processed {idx}/{total} FFlags")
             
             self.status_update.emit("Automation completed successfully!")
             self.finished.emit(True, "FFlags successfully applied to RuntimeFFlagEditor. No errors detected.")
@@ -202,6 +204,23 @@ class FFlagApp(QMainWindow):
         # === BOTTOM SECTION: Automation Control ===
         control_group = QGroupBox("3. Automation Control")
         control_layout = QVBoxLayout()
+        
+        # Speed settings
+        speed_layout = QHBoxLayout()
+        speed_layout.addWidget(QLabel("Speed Preset:"))
+        
+        self.speed_combo = QComboBox()
+        self.speed_combo.addItems([
+            "Ultra Fast (0.01s) - Best for large batches",
+            "Fast (0.02s) - Balanced",
+            "Normal (0.03s) - Safer for slower systems",
+            "Slow (0.05s) - Most compatible"
+        ])
+        self.speed_combo.setCurrentIndex(0)  # Default to Ultra Fast
+        self.speed_combo.setToolTip("Choose speed based on your system and target app performance")
+        speed_layout.addWidget(self.speed_combo, 1)
+        
+        control_layout.addLayout(speed_layout)
         
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -336,13 +355,22 @@ class FFlagApp(QMainWindow):
             QMessageBox.warning(self, "No FFlags", "Please validate JSON first.")
             return
         
+        # Calculate estimated time
+        total_flags = len(self.current_fflags)
+        estimated_seconds = total_flags * 0.04  # ~0.04s per flag
+        estimated_time = f"{int(estimated_seconds // 60)}m {int(estimated_seconds % 60)}s" if estimated_seconds >= 60 else f"{int(estimated_seconds)}s"
+        
         # Warn user to focus the window
         reply = QMessageBox.question(
             self,
             "Ready to Start?",
             f"Automation will begin in 3 seconds.\n\n"
-            f"Total FFlags to process: {len(self.current_fflags)}\n\n"
-            f"⚠ Make sure RuntimeFFlagEditor window is focused and ready!\n\n"
+            f"Total FFlags: {total_flags}\n"
+            f"Estimated time: ~{estimated_time}\n\n"
+            f"⚠ IMPORTANT:\n"
+            f"• Keep the FFlag Editor window focused\n"
+            f"• Don't touch mouse/keyboard during automation\n"
+            f"• Don't switch windows or minimize\n\n"
             f"Continue?",
             QMessageBox.Yes | QMessageBox.No
         )
@@ -355,8 +383,13 @@ class FFlagApp(QMainWindow):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         
-        # Start worker thread (optimized speed)
-        self.automation_worker = AutomationWorker(self.current_fflags, delay=0.05)
+        # Get delay from speed preset
+        speed_index = self.speed_combo.currentIndex()
+        delay_map = {0: 0.01, 1: 0.02, 2: 0.03, 3: 0.05}
+        delay = delay_map.get(speed_index, 0.01)
+        
+        # Start worker thread with selected speed
+        self.automation_worker = AutomationWorker(self.current_fflags, delay=delay)
         self.automation_worker.progress_update.connect(self.update_progress)
         self.automation_worker.status_update.connect(self.log_status)
         self.automation_worker.finished.connect(self.automation_finished)
